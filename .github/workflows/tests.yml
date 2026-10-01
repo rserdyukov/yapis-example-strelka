@@ -1,6 +1,6 @@
 name: tests
 
-# Тесты компилятора Strelka (FSM → WebAssembly).
+# Тесты компилятора Switchyard (FSM → WebAssembly).
 #
 # Node и wat2wasm нужны, чтобы тесты не пропускались: дифференциальный
 # прогон против reference.py и сверка нашего кодировщика с wat2wasm.
