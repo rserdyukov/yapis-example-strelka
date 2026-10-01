@@ -1,0 +1,16 @@
+# Две раздачи: в первой дошли до вскрытия, во второй бот сбросил на флопе.
+# Зерно 7 делает тасование воспроизводимым.
+table.start 7
+table.deal
+you.call
+you.call
+you.call
+you.call
+table.deal
+you.raise
+you.raise
+# лишний ход — стол ответит, что сейчас не ваша очередь
+you.call
+table.deal
+you.fold
+table.quit

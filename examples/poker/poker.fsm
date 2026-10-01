@@ -1,0 +1,222 @@
+// Техасский холдем на двоих (heads-up, лимитный): человек против бота.
+//
+// Пример показывает, что в языке автоматов работают идеи из других языков:
+//   * модули и импорт — cards (колода), holdem (оценка рук), players (игроки);
+//   * абстракция — стол знает игроков только через интерфейс players.Seat;
+//     человек и бот — разные автоматы, а стол один и тот же;
+//   * несколько автоматов в одной задаче — стол и два игрока, общение только
+//     событиями (send), общих переменных нет;
+//   * функции, локальные переменные, массивы, ограниченный for.
+//
+// Правила упрощены: лимитные ставки (SMALL до флопа и на флопе, BIG дальше),
+// не больше MAX_RAISES повышений за круг, место 0 всегда на баттоне, у
+// баттона малый блайнд и он ходит первым до флопа, вторым после. Фишки не
+// кончаются: игра идёт, пока не скажут quit.
+//
+//   ./compile.sh examples/poker/poker.fsm examples/poker/poker.events
+
+system Poker
+import cards, holdem, players
+
+const SMALL: int = 10
+const BIG: int = 20
+const MAX_RAISES: int = 3
+const NAMES: string[2] = ["Вы", "Бот"]
+const TAKES: string[2] = ["Вы забираете банк ", "Бот забирает банк "]
+
+machine Table(seats: players.Seat[2]) {
+  context {
+    deck: int[52]
+    top: int = 0                 // следующая карта колоды
+    hole: int[4]                 // закрытые карты: места 0 и 1 по две
+    board: int[5]
+    shown: int = 0               // сколько общих карт открыто
+    bet: int[2]                  // ставки в текущем круге
+    chips: int[2] = [1000, 1000]
+    pot: int = 0
+    turn: int = 0                // чей ход
+    acted: int = 0               // сколько ходов в круге без повышения
+    raises: int = 0
+    hands: int = 0
+  }
+  events {
+    start(seed: int), deal, quit
+    fold(p: int), call(p: int), raise(p: int)
+  }
+  states Idle, Preflop, Flop, Turn, River, Over
+  initial Idle
+  terminal Idle
+
+  // ------------------------------------------------------------ функции
+
+  func other(p: int) -> int { return 1 - p }
+  func to_call(p: int) -> int { return bet[other(p)] - bet[p] }
+  func limit() -> int {
+    if shown >= 4 { return BIG }
+    return SMALL
+  }
+
+  func hand_of(p: int) -> int {
+    var h: int[7]
+    h[0] = hole[2 * p]
+    h[1] = hole[2 * p + 1]
+    for i in 0 .. 5 { h[i + 2] = board[i] }
+    return holdem.score(h, 7)
+  }
+
+  // ------------------------------------------------------------ действия
+
+  action seed(s: int) {
+    srand(s)
+    say "Техасский холдем: вы против бота. Блайнды ", SMALL / 2, "/", SMALL, "."
+  }
+
+  action put(p: int, amount: int) {
+    chips[p] = chips[p] - amount
+    bet[p] = bet[p] + amount
+    pot = pot + amount
+  }
+
+  action new_hand {
+    hands = hands + 1
+    cards.shuffle(deck)
+    top = 0
+    shown = 0
+    pot = 0
+    bet[0] = 0
+    bet[1] = 0
+    say ""
+    say "— Раздача ", hands, ". Фишки: вы ", chips[0], ", бот ", chips[1], " —"
+    for p in 0 .. 2 {
+      send seats[p].reset()
+      hole[2 * p] = deck[top]
+      hole[2 * p + 1] = deck[top + 1]
+      top = top + 2
+      send seats[p].hole(hole[2 * p], hole[2 * p + 1])
+    }
+    put(0, SMALL / 2)
+    put(1, SMALL)
+    raises = 1                    // большой блайнд считается первым повышением
+    acted = 0
+    turn = 0
+    ask()
+  }
+
+  action ask() {
+    send seats[turn].act(to_call(turn), pot, raises < MAX_RAISES)
+  }
+
+  action open(n: int, title: string) {
+    write title, ":"
+    for i in 0 .. n {
+      board[shown] = deck[top]
+      write " ", cards.name(deck[top])
+      for p in 0 .. 2 { send seats[p].board(deck[top]) }
+      shown = shown + 1
+      top = top + 1
+    }
+    say "   (банк ", pot, ")"
+    bet[0] = 0
+    bet[1] = 0
+    acted = 0
+    raises = 0
+    turn = 1                      // после флопа первым ходит блайнд
+    ask()
+  }
+
+  action do_call(p: int) {
+    var c: int = to_call(p)
+    if c > 0 { say NAMES[p], ": колл ", c } else { say NAMES[p], ": чек" }
+    put(p, c)
+    acted = acted + 1
+  }
+
+  action do_raise(p: int) {
+    var c: int = to_call(p) + limit()
+    say NAMES[p], ": рейз до ", bet[p] + c
+    put(p, c)
+    raises = raises + 1
+    acted = 1
+  }
+
+  action pass_turn {
+    turn = other(turn)
+    ask()
+  }
+
+  action win(p: int) {
+    say TAKES[p], pot
+    chips[p] = chips[p] + pot
+    pot = 0
+    say "  (сдайте следующую раздачу: deal)"
+  }
+
+  action folded(p: int) {
+    say NAMES[p], ": пас"
+    win(other(p))
+  }
+
+  action showdown {
+    var s0: int = hand_of(0)
+    var s1: int = hand_of(1)
+    say "Вскрытие: ", cards.name(hole[0]), " ", cards.name(hole[1]), " (",
+        holdem.describe(s0), ") против ", cards.name(hole[2]), " ", cards.name(hole[3]),
+        " (", holdem.describe(s1), ")"
+    if s0 > s1 {
+      win(0)
+    } else if s1 > s0 {
+      win(1)
+    } else {
+      say "Ничья: банк делится"
+      chips[0] = chips[0] + pot / 2
+      chips[1] = chips[1] + pot - pot / 2
+      pot = 0
+      say "  (сдайте следующую раздачу: deal)"
+    }
+  }
+
+  action bye { say "Игра окончена после ", hands, " раздач. Итог: вы ", chips[0],
+                   ", бот ", chips[1] }
+  action wrong_turn(p: int) { say "  (", NAMES[p], ": сейчас ход другого игрока)" }
+  action cannot_raise { say "  (повышать больше нельзя)" }
+
+  // ------------------------------------------------------------ переходы
+  // Торговля одинакова на всех улицах, поэтому её правила записаны один раз
+  // для четырёх состояний (`Preflop | Flop | Turn | River -- ...`).
+  // acted — сколько ходов сделано после последнего повышения (рейз сам
+  // считается ходом). Колл при acted >= 1 закрывает круг: ставки равны и
+  // оба высказались. До флопа acted = 0: колл малого блайнда круг не
+  // закрывает, у большого блайнда остаётся право хода.
+
+  Idle  -- start(s) ----------------------------------------> Over / seed(s)
+  Over  -- deal --------------------------------------------> Preflop / new_hand
+  Over  -- quit --------------------------------------------> Idle / bye
+
+  Preflop | Flop | Turn | River
+        -- fold(p) | call(p) | raise(p) [p != turn] --------> / wrong_turn(p)
+  Preflop | Flop | Turn | River
+        -- fold(p) else ------------------------------------> Over / folded(p)
+  Preflop | Flop | Turn | River
+        -- raise(p) else [raises >= MAX_RAISES] ------------> / cannot_raise, ask
+  Preflop | Flop | Turn | River
+        -- raise(p) else -----------------------------------> / do_raise(p), pass_turn
+
+  Preflop -- call(p) else [acted >= 1] ---------------------> Flop / do_call(p), open(3, "Флоп")
+  Preflop -- call(p) else ----------------------------------> / do_call(p), pass_turn
+  Flop    -- call(p) else [acted >= 1] ---------------------> Turn / do_call(p), open(1, "Тёрн")
+  Flop    -- call(p) else ----------------------------------> / do_call(p), pass_turn
+  Turn    -- call(p) else [acted >= 1] ---------------------> River / do_call(p), open(1, "Ривер")
+  Turn    -- call(p) else ----------------------------------> / do_call(p), pass_turn
+  River   -- call(p) else [acted >= 1] ---------------------> Over / do_call(p), showdown
+  River   -- call(p) else ----------------------------------> / do_call(p), pass_turn
+
+  Idle  -- deal | quit | fold(_) | call(_) | raise(_)         ignore
+  Over  -- start(_) | fold(_) | call(_) | raise(_)            ignore
+  Preflop | Flop | Turn | River -- start(_) | deal | quit     ignore
+}
+
+you:   players.Human(0, table)
+bot:   players.Bot(1, table, 25)
+table: Table([you, bot])
+
+input table.start, table.deal, table.quit, you.fold, you.call, you.raise

@@ -1,0 +1,49 @@
+// Модуль lights: светофор как шаблон автомата и интерфейсы для связи.
+// Подключается в crossroad.fsm через `import lights`.
+
+module lights
+
+// Что контроллер посылает сигналу: светофору направления или пешеходному.
+interface Signal {
+  go, stop, tick
+}
+
+// Кому сигнал докладывает, что он погас: так контроллер узнаёт, что
+// перекрёсток безопасен. Подходит любой автомат с событием done(string).
+interface Watcher {
+  done(who: string)
+}
+
+const YELLOW_TICKS: int = 2
+
+// Светофор направления. Параметры экземпляра: имя для вывода и кому
+// докладывать. Жёлтый горит YELLOW_TICKS тактов, затем красный и доклад.
+machine Light(name: string, boss: Watcher) {
+  context { left: int = 0 }
+  events { go, stop, tick }
+  states Red, Green, Yellow
+  initial Red
+  terminal Red
+
+  action show(color: string) { say "  ", name, ": ", color }
+
+  action start_yellow {
+    left = YELLOW_TICKS
+    show("жёлтый")
+  }
+
+  action count { left = left - 1 }
+
+  action to_red {
+    show("красный")
+    send boss.done(name)
+  }
+
+  Red    -- go -----------------------> Green  / show("зелёный")
+  Green  -- stop ---------------------> Yellow / start_yellow
+  Yellow -- tick [left > 1] ----------> / count
+  Yellow -- tick else ----------------> Red    / to_red
+  Red    -- stop | tick                 ignore
+  Green  -- go | tick                   ignore
+  Yellow -- go | stop                   ignore
+}

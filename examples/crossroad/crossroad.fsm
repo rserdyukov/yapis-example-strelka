@@ -1,0 +1,125 @@
+// Перекрёсток с пешеходной кнопкой: четыре автомата в одной системе.
+//
+//   ns, ew — два экземпляра ОДНОГО шаблона lights.Light (модуль lights.fsm);
+//   walk   — пешеходный переход, кнопка нажимается извне;
+//   ctl    — контроллер: даёт зелёный по очереди и вставляет пешеходную фазу.
+//
+// Главное свойство — «никогда не зелёный двум сразу»: контроллер даёт go
+// следующему только после доклада done от погасшего. Связи — только через
+// send, общих переменных нет (как у акторов в Erlang).
+//
+//   ./compile.sh examples/crossroad/crossroad.fsm examples/crossroad/crossroad.events
+
+system Crossroad
+import lights
+
+const GREEN_TICKS: int = 4
+const WALK_TICKS: int = 3
+
+// Пешеходному переходу stop не нужен: фаза кончается сама. Поэтому у него
+// свой, более узкий интерфейс. Light под него тоже подходит — у Light есть
+// go и tick (структурная типизация: важны события, а не имя автомата).
+interface Crossing {
+  go, tick
+}
+
+// Пешеходный переход: подходит под Crossing.
+machine Walk(boss: lights.Watcher, ctl: Controller) {
+  context { left: int = 0, asked: bool = false }
+  events { go, tick, button }
+  states Wait, Cross
+  initial Wait
+  terminal Wait
+
+  action request {
+    if not asked {
+      asked = true
+      say "  пешеход: нажата кнопка"
+      send ctl.request()
+    }
+  }
+  action start {
+    asked = false
+    left = WALK_TICKS
+    say "  пешеход: идите"
+  }
+  action count { left = left - 1 }
+  action finish {
+    say "  пешеход: стойте"
+    send boss.done("пешеходы")
+  }
+
+  any   -- button ----------------> / request
+  Wait  -- go --------------------> Cross / start
+  Cross -- tick [left > 1] -------> / count
+  Cross -- tick else -------------> Wait  / finish
+  Wait  -- tick                     ignore
+  Cross -- go                       ignore
+}
+
+// Контроллер. Фазы идут по кругу: С-Ю, З-В, и если нажата кнопка — пешеходы
+// после текущего направления. Каждый такт пересылается всем сигналам.
+// shutdown гасит всё: без него компилятор выдаёт E103 — из рабочих фаз нет
+// пути в терминальное Off, перекрёсток нельзя выключить.
+machine Controller(ns: lights.Signal, ew: lights.Signal, walk: Crossing) {
+  context { left: int = 0, pending: bool = false, next: int = 1 }
+  events { tick, request, done(who: string), start, shutdown }
+  states Off, NS, EW, Stopping, Pedestrians
+  initial Off
+  terminal Off
+
+  action broadcast {
+    send ns.tick()
+    send ew.tick()
+    send walk.tick()
+  }
+  action count { left = left - 1 }
+  action green_ns { left = GREEN_TICKS
+                    say "фаза: север — юг"
+                    send ns.go() }
+  action green_ew { left = GREEN_TICKS
+                    say "фаза: запад — восток"
+                    send ew.go() }
+  action stop_ns  { next = 2
+                    send ns.stop() }
+  action stop_ew  { next = 1
+                    send ew.stop() }
+  action walk_now { pending = false
+                    say "фаза: пешеходы"
+                    send walk.go() }
+  action remember { pending = true }
+  action all_stop { say "выключение"
+                    send ns.stop()
+                    send ew.stop() }
+
+  Off      -- start ---------------------------> NS / green_ns
+  Off      -- tick ----------------------------> / broadcast
+  Off      -- request | done(_)                   ignore
+
+  NS       -- tick [left > 1] -----------------> / count, broadcast
+  NS       -- tick else -----------------------> Stopping / stop_ns, broadcast
+  EW       -- tick [left > 1] -----------------> / count, broadcast
+  EW       -- tick else -----------------------> Stopping / stop_ew, broadcast
+  Stopping -- tick ----------------------------> / broadcast
+  Pedestrians -- tick -------------------------> / broadcast
+
+  // Доклад «погас» — только теперь можно давать зелёный другому.
+  Stopping -- done(_) [pending] ---------------> Pedestrians / walk_now
+  Stopping -- done(_) else [next == 1] --------> NS / green_ns
+  Stopping -- done(_) else --------------------> EW / green_ew
+  Pedestrians -- done(_) [next == 1] ----------> NS / green_ns
+  Pedestrians -- done(_) else -----------------> EW / green_ew
+
+  any      -- request -------------------------> / remember
+  any      -- shutdown ------------------------> Off / all_stop
+  NS       -- done(_)                             ignore
+  EW       -- done(_)                             ignore
+  any      -- start                               ignore
+}
+
+ns:   lights.Light("С-Ю", ctl)
+ew:   lights.Light("З-В", ctl)
+walk: Walk(ctl, ctl)
+ctl:  Controller(ns, ew, walk)
+
+input ctl.start, ctl.tick, ctl.shutdown, walk.button

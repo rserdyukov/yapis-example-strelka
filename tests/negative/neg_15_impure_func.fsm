@@ -1,0 +1,18 @@
+// func — чистая функция: не меняет поля, не печатает, не вызывает действия.
+// Поэтому её можно звать из guard'а. Здесь все три нарушения.
+// expect: E132
+machine Counter
+context { n: int = 0 }
+events { hit }
+states S
+initial S
+terminal S
+action bump { n = n + 1 }
+func bad() -> bool {
+  n = n + 1
+  say "побочный эффект"
+  bump()
+  return true
+}
+S -- hit [bad()] --> / bump
+S -- hit else ----> / bump

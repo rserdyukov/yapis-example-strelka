@@ -1,0 +1,158 @@
+// Грамматика языка FSM для Lark (LALR(1)).
+//
+// Это тот же язык, что в grammar/Fsm.g4, записанный средствами другой
+// библиотеки. Сравните:
+//   * в ANTLR приоритет операций задаётся порядком альтернатив одного
+//     левоокурсивного правила `expr`; в LALR-грамматике — лестницей правил
+//     or_expr → and_expr → not_expr → cmp_expr → add_expr → mul_expr → unary;
+//   * метки альтернатив ANTLR (`# binExpr`) здесь заменяют алиасы (`-> bin`);
+//   * `?правило` — правило «прозрачное»: если у него один потомок, узел
+//     не создаётся (в ANTLR для этого есть parenExpr + visitParenExpr).
+// Парсер не генерируется заранее: Lark строит таблицы LALR при загрузке.
+
+start: "machine" ID decl*                  -> machine_file
+     | "module" ID unit_decl*                 -> module_file
+     | "system" ID unit_decl*                 -> system_file
+
+?unit_decl: import_decl
+          | const_decl
+          | func_decl
+          | action_decl
+          | interface_decl
+          | machine_decl
+          | instance_decl
+          | input_decl
+
+?decl: import_decl
+     | const_decl
+     | context_decl
+     | events_decl
+     | states_decl
+     | initial_decl
+     | terminal_decl
+     | action_decl
+     | func_decl
+     | transition
+
+// ---------------------------------------------------------------- объявления
+
+import_decl:   "import" ID ("," ID)*
+const_decl:    "const" ID ":" type_ref "=" expr
+context_decl:  "context" "{" [field (","? field)*] "}"
+field:         ID ":" type_ref ["=" expr]
+events_decl:   "events" "{" [event_sig (","? event_sig)*] "}"
+event_sig:     ID [PARAMS_OPEN [params] ")"]
+params:        param ("," param)*
+param:         [VAR] ID ":" type_ref
+type_ref:      [ID "."] ID ["[" INT "]"]
+states_decl:   "states" id_list
+initial_decl:  "initial" id_list
+terminal_decl: "terminal" id_list
+id_list:       ID ("," ID)*
+action_decl:   "action" ID [PARAMS_OPEN [params] ")"] block
+func_decl:     "func" ID PARAMS_OPEN [params] ")" ARROW type_ref block
+
+// ---------------------------------------------------------------- композиция
+
+machine_decl:   "machine" ID [PARAMS_OPEN [params] ")"] "{" decl* "}"
+interface_decl: "interface" ID "{" [event_sig (","? event_sig)*] "}"
+instance_decl:  ID ":" [ID "."] ID [PARAMS_OPEN [expr ("," expr)*] ")"]
+input_decl:     "input" input_ref ("," input_ref)*
+input_ref:      ID ["." ID]
+
+// ---------------------------------------------------------------- переходы
+
+transition: sources DASHES triggers [guard] ARROW ID [calls]   -> move_transition
+          | sources DASHES triggers [guard] ARROW calls        -> self_transition
+          | sources DASHES triggers "ignore"                   -> ignore_transition
+// `any` — «в любом состоянии» слева и «любое прочее событие» в триггере
+sources: (ID | ANY) ("|" (ID | ANY))*
+
+triggers: trigger ("|" trigger)*
+trigger:  (ID | ANY) [PARAMS_OPEN [pattern ("," pattern)*] ")"]
+pattern:  ID [":" ID]
+
+guard: [ELSE] "[" expr "]"
+     | ELSE
+
+calls: "/" call ("," call)*
+call:  SEND send_target                                  -> send_call
+     | [ID "."] ID [PARAMS_OPEN [expr ("," expr)*] ")"]  -> action_call
+send_target: ID ["[" expr "]"] "." ID [PARAMS_OPEN [expr ("," expr)*] ")"]
+
+// ---------------------------------------------------------------- операторы
+
+block: "{" stmt* "}"
+
+?stmt: VAR ID ":" type_ref ["=" expr]                    -> var_stmt
+     | ID ["[" expr "]"] "=" expr                        -> assign
+     | (SAY | WRITE) expr ("," expr)*                    -> say
+     | if_stmt
+     | FOR ID "in" expr DOTDOT expr block                -> for_stmt
+     | RETURN expr                                       -> return_stmt
+     | SEND send_target                                  -> send_stmt
+     | [ID "."] ID PARAMS_OPEN [expr ("," expr)*] ")"    -> call_stmt
+
+if_stmt: IF expr block [ELSE (block | if_stmt)]
+
+// ---------------------------------------------------------------- выражения
+
+?expr: or_expr
+?or_expr:  and_expr | or_expr OR and_expr            -> bin
+?and_expr: not_expr | and_expr AND not_expr          -> bin
+?not_expr: cmp_expr | NOT not_expr                   -> unary
+?cmp_expr: add_expr | cmp_expr CMP_OP add_expr       -> bin
+?add_expr: mul_expr | add_expr ADD_OP mul_expr       -> bin
+?mul_expr: unary    | mul_expr MUL_OP unary          -> bin
+?unary:    atom     | MINUS unary                    -> unary
+?atom: INT                                           -> int_lit
+     | STRING                                        -> str_lit
+     | TRUE                                          -> bool_lit
+     | FALSE                                         -> bool_lit
+     | [ID "."] ID                                   -> ref
+     | [ID "."] ID PARAMS_OPEN [expr ("," expr)*] ")" -> call_expr
+     | [ID "."] ID "[" expr "]"                      -> index
+     | ARRAY_OPEN [expr ("," expr)*] "]"             -> array_lit
+     | "(" expr ")"
+
+// ---------------------------------------------------------------- лексика
+
+// Именованные ключевые слова нужны там, где Transformer читает их позицию
+// или отличает одно от другого.
+SAY: "say"
+WRITE: "write"
+VAR: "var"
+FOR: "for"
+RETURN: "return"
+SEND: "send"
+ANY: "any"
+IF: "if"
+ELSE: "else"
+OR: "or"
+AND: "and"
+NOT: "not"
+TRUE: "true"
+FALSE: "false"
+// Скобка «открывает список» — именованный терминал, чтобы Transformer
+// отличал `pin()` (пустой список образцов) от `pin` (без скобок).
+PARAMS_OPEN: "("
+// Скобка массива — тоже именованная: по ней Transformer узнаёт позицию
+// литерала `[1, 2]` (у анонимных терминалов позиции нет).
+ARRAY_OPEN: "["
+DOTDOT: ".."
+
+CMP_OP: "==" | "!=" | "<=" | ">=" | "<" | ">"
+ADD_OP: "+" | MINUS
+MUL_OP: "*" | "/" | "%"
+MINUS: "-"
+
+ARROW: /-+>/
+DASHES: /--+/
+
+ID: /[^\W\d]\w*/
+INT: /[0-9]+/
+STRING: /"(?:[^"\\\r\n]|\\["\\n])*"/
+
+COMMENT: /\/\/[^\n]*/
+%ignore COMMENT
+%ignore /[ \t\r\n]+/

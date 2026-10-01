@@ -1,0 +1,9 @@
+// `any` в триггере — «любое прочее событие»: без образца и в одиночку.
+// expect: E137 W108
+machine M
+events { a, b(x: int) }
+states S
+initial S
+terminal S
+S -- any(x) | a --> / act
+action act { say "?" }

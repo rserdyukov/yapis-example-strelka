@@ -1,0 +1,15 @@
+// send адресуется только self или параметру-ссылке на экземпляр; ссылку
+// нельзя использовать в выражении.
+// expect: E135
+system S
+interface Out { tick }
+machine A(o: Out, k: int) {
+  events { go, tick }
+  states X
+  initial X
+  terminal X
+  action bad { say o }
+  X -- go --> / send k.tick(), bad
+  X -- tick ignore
+}
+a: A(a, 1)

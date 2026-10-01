@@ -1,0 +1,16 @@
+// Переменная цикла неизменяема, границы — int: так цикл всегда завершается.
+// expect: E115
+machine M
+context { s: int = 0 }
+events { e }
+states S
+initial S
+terminal S
+action act {
+  for i in 0 .. 10 {
+    i = 0
+    s = s + i
+  }
+  for j in 0 .. "десять" { s = s + j }
+}
+S -- e --> / act

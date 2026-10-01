@@ -1,0 +1,15 @@
+// Рекурсия запрещена: каждый шаг автомата обязан завершиться. Вместе с
+// ограниченным for это делает язык не Тьюринг-полным — сознательно.
+// expect: E133
+machine Fact
+context { r: int = 0 }
+events { go(n: int) }
+states S
+initial S
+terminal S
+func fact(n: int) -> int {
+  if n <= 1 { return 1 }
+  return n * fact(n - 1)
+}
+action run(n: int) { r = fact(n) }
+S -- go(n) --> / run(n)

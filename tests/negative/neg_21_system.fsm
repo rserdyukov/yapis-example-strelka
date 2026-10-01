@@ -1,0 +1,22 @@
+// Система: автомат не подходит под интерфейс (нет события, другой тип
+// параметра), send несуществующего события, неизвестный экземпляр.
+// expect: E135 E136 E138 W139
+system Broken
+interface Sink { put(v: int), flush }
+machine Producer(out: Sink) {
+  events { go }
+  states S
+  initial S
+  terminal S
+  S -- go --> / send out.push(1)
+}
+machine Wrong {
+  events { put(v: string) }
+  states S
+  initial S
+  terminal S
+  S -- put(_) ignore
+}
+p: Producer(w)
+w: Wrong
+input p.go, ghost.go

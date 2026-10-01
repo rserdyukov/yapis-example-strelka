@@ -1,0 +1,15 @@
+# Числа JSON: верные и неверные. Ошибка — с позицией символа.
+text 0
+text -12
+text 3.1415
+text 6.02e23
+text 1E-9
+text -0.5e+10
+text 01
+text 1.
+text .5
+text +5
+text --1
+text 1e
+text 12a
+text -

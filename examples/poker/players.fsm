@@ -1,0 +1,105 @@
+// Модуль players: два вида игроков за покерным столом — человек и бот.
+//
+// Стол не знает, кто сидит на месте: он общается с ним через интерфейс
+// Seat. Человек и бот устроены по-разному, но оба подходят под Seat —
+// это полиморфизм без наследования, как интерфейсы в Go: автомат подходит,
+// если объявляет все события интерфейса с теми же типами параметров.
+
+module players
+import cards, holdem
+
+// Что стол посылает игроку.
+interface Seat {
+  reset                                   // новая раздача: забыть карты
+  hole(x: int, y: int)                    // две закрытые карты
+  board(c: int)                           // общая карта
+  act(to_call: int, pot: int, can_raise: bool)   // ваш ход
+}
+
+// Что игрок посылает столу. p — номер места: стол проверяет, чей ход.
+interface Dealer {
+  fold(p: int)                            // сбросить карты
+  call(p: int)                            // уравнять (или чек, если ставить нечего)
+  raise(p: int)                           // поднять на фиксированную ставку
+}
+
+// Человек: ход приходит событием act, ответ — командой из сценария
+// (you.fold / you.call / you.raise) или кнопкой в playground.
+machine Human(me: int, table: Dealer) {
+  events {
+    reset, hole(x: int, y: int), board(c: int), act(to_call: int, pot: int, can_raise: bool)
+    fold, call, raise
+  }
+  states Watching, Thinking
+  initial Watching
+  terminal Watching
+
+  action show_hole(x: int, y: int) { say "  ваши карты: ", cards.name(x), " ", cards.name(y) }
+
+  action prompt(to_call: int, pot: int, can_raise: bool) {
+    write "  ваш ход (банк ", pot, "): "
+    if to_call > 0 { write "fold, call ", to_call } else { write "fold, call (чек)" }
+    if can_raise { say ", raise" } else { say "" }
+  }
+
+  action not_yet { say "  сейчас не ваш ход" }
+
+  Watching -- act(t, p, r) -------------> Thinking / prompt(t, p, r)
+  Thinking -- fold ---------------------> Watching / send table.fold(me)
+  Thinking -- call ---------------------> Watching / send table.call(me)
+  Thinking -- raise --------------------> Watching / send table.raise(me)
+  Watching -- fold | call | raise ------> / not_yet
+
+  any      -- hole(x, y) ---------------> / show_hole(x, y)
+  any      -- reset | board(_)            ignore
+  Thinking -- act(_, _, _)                ignore
+}
+
+// Бот: решение — чистая функция от известных карт; характер задаёт
+// параметр nerve — вероятность (в процентах) не сбросить слабую руку.
+machine Bot(me: int, table: Dealer, nerve: int) {
+  context { hand: int[7], n: int = 0 }
+  events { reset, hole(x: int, y: int), board(c: int), act(to_call: int, pot: int, can_raise: bool) }
+  states Empty, Holding
+  initial Empty
+  terminal Empty
+
+  // 0 — мусор, 1 — можно играть, 2 — сильная, 3 — очень сильная.
+  func strength() -> int {
+    if n == 2 {                            // префлоп: только свои карты
+      var hi: int = max(cards.rank(hand[0]), cards.rank(hand[1]))
+      var lo: int = min(cards.rank(hand[0]), cards.rank(hand[1]))
+      if hi == lo and hi >= 10 { return 3 }
+      if hi == lo or hi + lo >= 25 { return 2 }
+      if hi >= 12 { return 1 }
+      return 0
+    }
+    var cat: int = holdem.category(holdem.score(hand, n))
+    if cat >= 3 { return 3 }
+    return cat
+  }
+
+  action clear { n = 0 }
+  action take(c: int) {
+    hand[n] = c
+    n = n + 1
+  }
+
+  action decide(to_call: int, can_raise: bool) {
+    var s: int = strength()
+    if s >= 2 and can_raise {
+      send table.raise(me)
+    } else if s >= 1 or to_call == 0 or random(100) < nerve {
+      send table.call(me)
+    } else {
+      send table.fold(me)
+    }
+  }
+
+  any     -- reset ---------------------> Empty / clear
+  Empty   -- hole(x, y) ----------------> Holding / take(x), take(y)
+  Holding -- board(c) ------------------> / take(c)
+  Holding -- act(t, _, r) --------------> / decide(t, r)
+  Empty   -- board(_) | act(_, _, _)      ignore
+  Holding -- hole(_, _)                   ignore
+}

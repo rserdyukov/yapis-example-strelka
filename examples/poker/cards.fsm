@@ -1,0 +1,31 @@
+// Модуль cards: колода из 52 карт. Только функции и действия, автоматов нет.
+//
+// Карта — число 0..51: масть = c / 13, ранг = c % 13 + 2 (2..14, туз — 14).
+// Так карты хранятся в обычных int[] и сравниваются арифметикой.
+
+module cards
+
+const SUITS: string[4] = ["♠", "♥", "♦", "♣"]
+const RANKS: string[13] = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "В", "Д", "К", "Т"]
+
+func rank(c: int) -> int { return c % 13 + 2 }
+func suit(c: int) -> int { return c / 13 }
+
+func name(c: int) -> string {
+  return RANKS[rank(c) - 2] + SUITS[suit(c)]
+}
+
+// Разложить колоду по порядку и перемешать (тасование Фишера — Йетса).
+// Колода передаётся по ссылке (var): действие меняет массив вызывающего.
+// random — встроенный генератор xorshift32; srand(seed) делает раздачу
+// воспроизводимой — на этом держатся тесты.
+action shuffle(var deck: int[52]) {
+  for i in 0 .. 52 { deck[i] = i }
+  for k in 0 .. 51 {
+    var i: int = 51 - k
+    var j: int = random(i + 1)
+    var t: int = deck[i]
+    deck[i] = deck[j]
+    deck[j] = t
+  }
+}

@@ -1,0 +1,130 @@
+// Модуль holdem: оценка лучшей комбинации из n карт (n ≤ 7: 2 свои + до 5 общих).
+// Только чистые функции: они не меняют контекст и ничего не печатают,
+// поэтому их можно вызывать из guard'ов (компилятор это проверяет, E132).
+//
+// Оценка — одно число: категория * 15^5 + до пяти рангов-«кикеров».
+// Больше число — сильнее рука; равные числа — ничья. Сравнивать руки
+// можно обычным `>`.
+
+module holdem
+import cards
+
+const CATEGORY: string[9] = ["старшая карта", "пара", "две пары", "сет", "стрит",
+                             "флеш", "фулл-хаус", "каре", "стрит-флеш"]
+const BASE: int = 15
+
+// Ранги 2..14 записываются цифрами числа по основанию 15.
+func pack(cat: int, a: int, b: int, c: int, d: int, e: int) -> int {
+  return ((((cat * BASE + a) * BASE + b) * BASE + c) * BASE + d) * BASE + e
+}
+
+func category(score: int) -> int { return score / (BASE * BASE * BASE * BASE * BASE) }
+func describe(score: int) -> string { return CATEGORY[category(score)] }
+
+func bit(r: int) -> int {
+  var b: int = 1
+  for p in 0 .. r { b = b * 2 }
+  return b
+}
+
+func has(mask: int, r: int) -> bool { return mask / bit(r) % 2 == 1 }
+
+// Старшая карта стрита в наборе рангов (бит r — есть ранг r), 0 — стрита нет.
+// Колесо A-2-3-4-5 — стрит до пятёрки: туз считается и единицей.
+func straight_top(mask: int) -> int {
+  var m: int = mask
+  if has(m, 14) { m = m + bit(1) }
+  var best: int = 0
+  for top in 5 .. 15 {
+    var run: bool = true
+    for k in 0 .. 5 {
+      if not has(m, top - k) { run = false }
+    }
+    if run { best = top }
+  }
+  return best
+}
+
+// k-й по старшинству ранг, которого в руке ровно n штук (k с нуля);
+// skip — ранг, который не считать. 0 — такого нет.
+func nth_rank(counts: int[15], n: int, k: int, skip: int) -> int {
+  var seen: int = 0
+  for i in 0 .. 13 {
+    var r: int = 14 - i
+    if counts[r] == n and r != skip {
+      if seen == k { return r }
+      seen = seen + 1
+    }
+  }
+  return 0
+}
+
+// k-й по старшинству ранг среди всех, кроме skip1 и skip2 (кикеры).
+func kicker(counts: int[15], k: int, skip1: int, skip2: int) -> int {
+  var seen: int = 0
+  for i in 0 .. 13 {
+    var r: int = 14 - i
+    if counts[r] > 0 and r != skip1 and r != skip2 {
+      if seen == k { return r }
+      seen = seen + 1
+    }
+  }
+  return 0
+}
+
+func score(hand: int[7], n: int) -> int {
+  var counts: int[15]
+  var suits: int[4]
+  var mask: int = 0
+  for i in 0 .. n {
+    var r: int = cards.rank(hand[i])
+    counts[r] = counts[r] + 1
+    suits[cards.suit(hand[i])] = suits[cards.suit(hand[i])] + 1
+    if counts[r] == 1 { mask = mask + bit(r) }
+  }
+
+  // Флеш и стрит-флеш: ранги только масти, которой пять или больше.
+  for s in 0 .. 4 {
+    if suits[s] >= 5 {
+      var fmask: int = 0
+      var fr: int[15]
+      for i in 0 .. n {
+        if cards.suit(hand[i]) == s {
+          fr[cards.rank(hand[i])] = 1
+          fmask = fmask + bit(cards.rank(hand[i]))
+        }
+      }
+      var sf: int = straight_top(fmask)
+      if sf > 0 { return pack(8, sf, 0, 0, 0, 0) }
+      return pack(5, kicker(fr, 0, 0, 0), kicker(fr, 1, 0, 0), kicker(fr, 2, 0, 0),
+                  kicker(fr, 3, 0, 0), kicker(fr, 4, 0, 0))
+    }
+  }
+
+  var quad: int = nth_rank(counts, 4, 0, 0)
+  if quad > 0 { return pack(7, quad, kicker(counts, 0, quad, 0), 0, 0, 0) }
+
+  var trips: int = nth_rank(counts, 3, 0, 0)
+  var pair: int = nth_rank(counts, 2, 0, 0)
+  var trips2: int = nth_rank(counts, 3, 1, 0)
+  if trips > 0 and (pair > 0 or trips2 > 0) {
+    return pack(6, trips, max(pair, trips2), 0, 0, 0)
+  }
+
+  var st: int = straight_top(mask)
+  if st > 0 { return pack(4, st, 0, 0, 0, 0) }
+
+  if trips > 0 {
+    return pack(3, trips, kicker(counts, 0, trips, 0), kicker(counts, 1, trips, 0), 0, 0)
+  }
+  var pair2: int = nth_rank(counts, 2, 1, 0)
+  if pair2 > 0 {
+    return pack(2, pair, pair2, kicker(counts, 0, pair, pair2), 0, 0)
+  }
+  if pair > 0 {
+    return pack(1, pair, kicker(counts, 0, pair, 0), kicker(counts, 1, pair, 0),
+                kicker(counts, 2, pair, 0), 0)
+  }
+  return pack(0, kicker(counts, 0, 0, 0), kicker(counts, 1, 0, 0), kicker(counts, 2, 0, 0),
+              kicker(counts, 3, 0, 0), kicker(counts, 4, 0, 0))
+}

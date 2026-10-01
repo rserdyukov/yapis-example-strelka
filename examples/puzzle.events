@@ -1,0 +1,14 @@
+# Решение, найденное компилятором (python3 -m fsmc examples/puzzle.fsm --emit paths).
+# Сначала ошибка: волка нельзя везти первым — коза съест капусту.
+wolf
+restart
+# Попытка взять капусту, когда она на другом берегу, — ход невозможен.
+goat
+cabbage
+# Дальше — путь из --emit paths: goat alone wolf goat cabbage alone goat.
+alone
+wolf
+goat
+cabbage
+alone
+goat

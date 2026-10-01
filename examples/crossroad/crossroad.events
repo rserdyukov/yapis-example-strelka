@@ -1,0 +1,23 @@
+# Перекрёсток: старт, полный цикл, пешеходная кнопка, выключение.
+ctl.start
+ctl.tick
+ctl.tick
+walk.button
+walk.button
+ctl.tick
+ctl.tick
+ctl.tick
+ctl.tick
+ctl.tick
+ctl.tick
+ctl.tick
+ctl.tick
+ctl.tick
+ctl.tick
+ctl.tick
+ctl.tick
+ctl.tick
+ctl.shutdown
+ctl.tick
+ctl.tick
+ctl.tick

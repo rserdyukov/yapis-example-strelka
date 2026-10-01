@@ -1,0 +1,125 @@
+// Протокол чередующегося бита (alternating bit protocol, rdt 3.0 у
+// Куроуза и Росса): надёжная доставка поверх канала, который теряет пакеты.
+//
+// Четыре автомата: отправитель, получатель и два канала — прямой (данные)
+// и обратный (подтверждения). Один шаблон Channel используется дважды:
+// у данных и подтверждений одинаковый формат (бит, число), различаются
+// только адресаты.
+//
+//   sender ──data──▶ fwd ──data──▶ receiver
+//      ▲                              │
+//      └────ack──── back ◀───ack──────┘
+//
+// Потерю пакета задаёт сценарий: событие fwd.lose или back.lose означает
+// «следующий пакет этого канала пропадёт», timeout — сработал таймер
+// отправителя. Так недетерминизм сети становится воспроизводимым тестом.
+//
+// Чего добились без единого флага в коде: получатель отбрасывает дубликаты
+// по биту, отправитель — устаревшие подтверждения, а сообщения приходят по
+// порядку и ровно один раз при любом рисунке потерь.
+
+system AlternatingBit
+
+// Кому канал доставляет пакет. Под него подходят и Receiver (данные), и
+// Sender (подтверждения): у обоих есть событие packet(int, int).
+interface Peer {
+  packet(bit: int, value: int)
+}
+
+machine Channel(name: string, to: Peer) {
+  context { drop_next: bool = false }
+  events { packet(bit: int, value: int), lose }
+  states Up
+  initial Up
+  terminal Up
+
+  action pass(bit: int, value: int) {
+    if drop_next {
+      say "    ", name, ": пакет (", bit, ", ", value, ") потерян"
+      drop_next = false
+    } else {
+      send to.packet(bit, value)
+    }
+  }
+
+  action arm { drop_next = true }
+
+  Up -- packet(b, v) ---> / pass(b, v)
+  Up -- lose -----------> / arm
+}
+
+// Отправитель. Ждёт подтверждения с тем же битом; по таймеру повторяет.
+// Сообщения — числа из очереди msgs, новые приходят событием put.
+machine Sender(link: Peer) {
+  context { msgs: int[8], head: int = 0, tail: int = 0, bit: int = 0, tries: int = 0 }
+  events { put(value: int), packet(bit: int, value: int), timeout, next }
+  states Idle, Wait
+  initial Idle
+  terminal Idle
+
+  func pending() -> bool { return head < tail }
+
+  action enqueue(v: int) {
+    msgs[tail % 8] = v
+    tail = tail + 1
+  }
+  action transmit {
+    tries = tries + 1
+    say "отправитель: (", bit, ", ", msgs[head % 8], ")",
+        " попытка ", tries
+    send link.packet(bit, msgs[head % 8])
+  }
+  action acked {
+    say "отправитель: подтверждено ", msgs[head % 8]
+    head = head + 1
+    bit = 1 - bit
+    tries = 0
+    send self.next()
+  }
+  action stale(b: int) { say "отправитель: старое подтверждение ", b, " — пропускаю" }
+  action done { say "отправитель: очередь пуста" }
+
+  Idle -- put(v) ------------------------------> Wait / enqueue(v), transmit
+  Wait -- put(v) ------------------------------> / enqueue(v)
+  Wait -- packet(b, _) [b == bit] -------------> Idle / acked
+  Wait -- packet(b, _) else -------------------> / stale(b)
+  Wait -- timeout -----------------------------> / transmit
+  Idle -- packet(_, _) | timeout                 ignore
+
+  // После подтверждения автомат посылает себе next: если в очереди есть
+  // сообщения, он продолжает работу сам, без внешнего толчка.
+  Idle -- next [pending()] --------------------> Wait / transmit
+  Idle -- next else ---------------------------> / done
+  Wait -- next                                   ignore
+}
+
+// Получатель: принимает пакет с ожидаемым битом, на любой пакет отвечает
+// подтверждением с битом этого пакета.
+machine Receiver(link: Peer) {
+  context { expect: int = 0, got: int = 0 }
+  events { packet(bit: int, value: int) }
+  states Ready
+  initial Ready
+  terminal Ready
+
+  action deliver(b: int, v: int) {
+    got = got + 1
+    say "получатель: доставлено ", v
+    expect = 1 - expect
+    send link.packet(b, 0)
+  }
+  action duplicate(b: int, v: int) {
+    say "получатель: дубликат ", v, " — подтверждаю ещё раз"
+    send link.packet(b, 0)
+  }
+
+  Ready -- packet(b, v) [b == expect] ---> / deliver(b, v)
+  Ready -- packet(b, v) else ------------> / duplicate(b, v)
+}
+
+sender:   Sender(fwd)
+fwd:      Channel("канал данных", receiver)
+receiver: Receiver(back)
+back:     Channel("канал подтверждений", sender)
+
+input sender.put, sender.timeout, fwd.lose, back.lose

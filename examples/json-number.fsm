@@ -1,0 +1,116 @@
+// Лексер числа JSON: конечный автомат по символам.
+//
+// Это та же задача, что решает лексер в ЛР 2, только автомат написан
+// руками. Грамматика числа с json.org:
+//
+//   number = [ "-" ] int [ frac ] [ exp ]
+//   int    = "0" | цифра1-9 { цифра }
+//   frac   = "." цифра { цифра }
+//   exp    = ("e" | "E") [ "+" | "-" ] цифра { цифра }
+//
+// Каждому месту на railroad-диаграмме — своё состояние. Входная строка
+// приходит одним событием text(s); действие scan прогоняет её по символам
+// через событие ch, которое автомат посылает сам себе (send self). Это
+// цикл без while: каждый символ — отдельный шаг автомата.
+//
+//   ./compile.sh examples/json-number.fsm examples/json-number.events
+
+machine JsonNumber
+
+context {
+  src: string = ""
+  pos: int = 0
+}
+
+events {
+  text(s: string)          // проверить строку
+  ch(c: int)               // очередной символ (код байта)
+  end                      // строка кончилась
+}
+
+states Ready, Start, Minus, Zero, Int, Dot, Frac, E, ESign, Exp
+initial Ready
+terminal Ready
+
+func digit(c: int) -> bool  { return c >= 48 and c <= 57 }        // 0..9
+func nonzero(c: int) -> bool { return c >= 49 and c <= 57 }       // 1..9
+
+// Подать следующий символ или конец строки. Вызывается после каждого шага.
+action next {
+  if pos < len(src) {
+    pos = pos + 1
+    send self.ch(code(src, pos - 1))
+  } else {
+    send self.end()
+  }
+}
+
+action start(s: string) {
+  src = s
+  pos = 0
+  next()
+}
+
+action accept { say "✓ ", src }
+action reject { say "✗ ", src, "  — ошибка в позиции ", pos }
+
+// Ошибка: сообщить и съесть остаток строки, чтобы не путать его со
+// следующей. Состояние уже Ready, поэтому сюда же — «лишние» ch.
+action fail {
+  reject()
+  pos = len(src)
+}
+
+Ready -- text(s) -------------------------------> Start / start(s)
+
+// Начало: минус, ноль или первая цифра. После минуса — те же варианты,
+// кроме второго минуса (он попадает в else → fail). Минус — отдельное
+// состояние: если бы он вёл обратно в Start, автомат принял бы "--1"
+// (на railroad-диаграмме минус стоит на ветке, а не в петле).
+Start -- ch(c) [c == 45] -----------------------> Minus / next
+Start | Minus
+      -- ch(c) else [c == 48] ------------------> Zero  / next
+Start | Minus
+      -- ch(c) else [nonzero(c)] ---------------> Int   / next
+Start | Minus
+      -- ch(_) else ----------------------------> Ready / fail
+Start | Minus
+      -- end -----------------------------------> Ready / reject
+
+// После ведущего нуля цифр быть не может: "01" — не число JSON.
+Zero  -- ch(c) [c == 46] -----------------------> Dot   / next
+Zero  -- ch(c) else [c == 101 or c == 69] ------> E     / next
+Zero  -- ch(_) else ----------------------------> Ready / fail
+Zero  -- end -----------------------------------> Ready / accept
+
+Int   -- ch(c) [digit(c)] ----------------------> / next
+Int   -- ch(c) else [c == 46] ------------------> Dot   / next
+Int   -- ch(c) else [c == 101 or c == 69] ------> E     / next
+Int   -- ch(_) else ----------------------------> Ready / fail
+Int   -- end -----------------------------------> Ready / accept
+
+// После точки обязательна цифра: "1." — не число.
+Dot   -- ch(c) [digit(c)] ----------------------> Frac  / next
+Dot   -- ch(_) else ----------------------------> Ready / fail
+Dot   -- end -----------------------------------> Ready / reject
+
+Frac  -- ch(c) [digit(c)] ----------------------> / next
+Frac  -- ch(c) else [c == 101 or c == 69] ------> E     / next
+Frac  -- ch(_) else ----------------------------> Ready / fail
+Frac  -- end -----------------------------------> Ready / accept
+
+E     -- ch(c) [c == 43 or c == 45] ------------> ESign / next
+E     -- ch(c) else [digit(c)] -----------------> Exp   / next
+E     -- ch(_) else ----------------------------> Ready / fail
+E     -- end -----------------------------------> Ready / reject
+
+ESign -- ch(c) [digit(c)] ----------------------> Exp   / next
+ESign -- ch(_) else ----------------------------> Ready / fail
+ESign -- end -----------------------------------> Ready / reject
+
+Exp   -- ch(c) [digit(c)] ----------------------> / next
+Exp   -- ch(_) else ----------------------------> Ready / fail
+Exp   -- end -----------------------------------> Ready / accept
+
+Ready -- ch(_) | end                               ignore
+Start | Minus | Zero | Int | Dot | Frac | E | ESign | Exp -- text(_)  ignore

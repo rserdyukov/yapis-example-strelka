@@ -1,0 +1,10 @@
+// Модуль не найден; обращение к неимпортированному модулю.
+// expect: E130
+machine M
+import nosuchmodule
+events { e }
+states S
+initial S
+terminal S
+action act { say cards.name(0) }
+S -- e --> / act
