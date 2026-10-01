@@ -1,6 +1,6 @@
 """Тесты компилятора fsmc.
 
-    cd examples/atm-lang && python3 -m unittest discover -s tests -v
+    python3 -m unittest discover -s tests -v
 
 Node и wat2wasm необязательны: без них соответствующие тесты пропускаются
 (SKIP — не успех; в CI оба установлены).
